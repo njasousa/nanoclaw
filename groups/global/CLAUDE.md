@@ -47,6 +47,24 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
+## Scheduled Task Output
+
+When you run a scheduled task, save the output as a .docx file in `/workspace/group/task-outputs/`:
+
+1. Write the content to a temporary markdown file
+2. Convert to .docx using pandoc:
+   ```bash
+   mkdir -p /workspace/group/task-outputs
+   echo "# Task: <task name>\nDate: $(date '+%Y-%m-%d %H:%M')\n\n<content>" > /tmp/task-output.md
+   pandoc /tmp/task-output.md -o "/workspace/group/task-outputs/$(date '+%Y-%m-%d')-<task-name>.docx"
+   ```
+3. Delete files older than 30 days:
+   ```bash
+   find /workspace/group/task-outputs/ -name "*.docx" -mtime +30 -delete
+   ```
+
+Do this automatically at the end of every scheduled task, without being asked.
+
 ## Message Formatting
 
 NEVER use markdown. Only use WhatsApp/Telegram formatting:

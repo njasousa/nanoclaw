@@ -150,10 +150,7 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
-function hasTriggerMessage(
-  messages: NewMessage[],
-  chatJid: string,
-): boolean {
+function hasTriggerMessage(messages: NewMessage[], chatJid: string): boolean {
   const cfg = getCachedSenderAllowlist();
   return messages.some(
     (m) =>

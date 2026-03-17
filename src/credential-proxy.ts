@@ -41,6 +41,18 @@ export function startCredentialProxy(
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
   );
+
+  // SSRF guard: only allow HTTPS unless explicitly pointing to localhost/loopback
+  const isLoopback =
+    upstreamUrl.hostname === 'localhost' ||
+    upstreamUrl.hostname === '127.0.0.1' ||
+    upstreamUrl.hostname === '::1';
+  if (upstreamUrl.protocol !== 'https:' && !isLoopback) {
+    throw new Error(
+      `ANTHROPIC_BASE_URL must use HTTPS (got: ${upstreamUrl.protocol}//${upstreamUrl.hostname})`,
+    );
+  }
+
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
 
@@ -92,6 +104,10 @@ export function startCredentialProxy(
             upRes.pipe(res);
           },
         );
+
+        upstream.setTimeout(30_000, () => {
+          upstream.destroy(new Error('Upstream request timed out'));
+        });
 
         upstream.on('error', (err) => {
           logger.error(

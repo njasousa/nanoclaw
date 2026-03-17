@@ -75,8 +75,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
             .slice(0, MAX_IPC_FILES_PER_CYCLE);
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
+            const processingPath = `${filePath}.processing`;
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              // Atomic rename before read: prevents TOCTOU race conditions
+              fs.renameSync(filePath, processingPath);
+            } catch {
+              continue; // File already claimed by another cycle
+            }
+            try {
+              const data = JSON.parse(fs.readFileSync(processingPath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
@@ -105,7 +112,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   );
                 }
               }
-              fs.unlinkSync(filePath);
+              fs.unlinkSync(processingPath);
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
@@ -113,10 +120,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
               );
               const errorDir = path.join(ipcBaseDir, 'errors');
               fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
+              try {
+                fs.renameSync(
+                  processingPath,
+                  path.join(errorDir, `${sourceGroup}-${file}`),
+                );
+              } catch { /* already deleted */ }
             }
           }
         }
@@ -136,11 +145,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
             .slice(0, MAX_IPC_FILES_PER_CYCLE);
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
+            const processingPath = `${filePath}.processing`;
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              fs.renameSync(filePath, processingPath);
+            } catch {
+              continue; // File already claimed by another cycle
+            }
+            try {
+              const data = JSON.parse(fs.readFileSync(processingPath, 'utf-8'));
               // Pass source group identity to processTaskIpc for authorization
               await processTaskIpc(data, sourceGroup, isMain, deps);
-              fs.unlinkSync(filePath);
+              fs.unlinkSync(processingPath);
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
@@ -148,10 +163,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
               );
               const errorDir = path.join(ipcBaseDir, 'errors');
               fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
+              try {
+                fs.renameSync(
+                  processingPath,
+                  path.join(errorDir, `${sourceGroup}-${file}`),
+                );
+              } catch { /* already deleted */ }
             }
           }
         }

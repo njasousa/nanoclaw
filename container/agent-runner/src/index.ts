@@ -470,6 +470,16 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
+    if (
+      typeof containerInput !== 'object' ||
+      containerInput === null ||
+      typeof containerInput.prompt !== 'string' ||
+      typeof containerInput.groupFolder !== 'string' ||
+      typeof containerInput.chatJid !== 'string' ||
+      typeof containerInput.isMain !== 'boolean'
+    ) {
+      throw new Error('Invalid container input: missing required fields');
+    }
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {

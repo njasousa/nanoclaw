@@ -107,10 +107,16 @@ export async function startRemoteControl(
   const stdoutFd = fs.openSync(STDOUT_FILE, 'w');
   const stderrFd = fs.openSync(STDERR_FILE, 'w');
 
+  // Strip credentials not needed by the remote-control process.
+  // CLAUDE_CODE_OAUTH_TOKEN is kept so the CLI can authenticate.
+  // TELEGRAM_BOT_TOKEN has no business being accessible to a remote session.
+  const { TELEGRAM_BOT_TOKEN: _tg, ...safeEnv } = process.env;
+
   let proc;
   try {
     proc = spawn('claude', ['remote-control', '--name', 'NanoClaw Remote'], {
       cwd,
+      env: safeEnv,
       stdio: ['ignore', stdoutFd, stderrFd],
       detached: true,
     });

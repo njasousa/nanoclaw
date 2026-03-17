@@ -76,6 +76,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
             try {
+              // Symlink guard: only process regular files to prevent TOCTOU attacks
+              // where a container replaces a file with a symlink between readdir and read.
+              const stat = fs.lstatSync(filePath);
+              if (!stat.isFile()) {
+                logger.warn({ file, sourceGroup }, 'IPC message file is not a regular file, skipping');
+                try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+                continue;
+              }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
@@ -137,6 +145,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
             try {
+              // Symlink guard: only process regular files to prevent TOCTOU attacks.
+              const stat = fs.lstatSync(filePath);
+              if (!stat.isFile()) {
+                logger.warn({ file, sourceGroup }, 'IPC task file is not a regular file, skipping');
+                try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+                continue;
+              }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               // Pass source group identity to processTaskIpc for authorization
               await processTaskIpc(data, sourceGroup, isMain, deps);

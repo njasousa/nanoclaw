@@ -20,12 +20,21 @@ const DEFAULT_CONFIG: SenderAllowlistConfig = {
   logDenied: true,
 };
 
+// Sender IDs must be non-empty, ≤100 chars, and contain only safe characters.
+// This prevents regex injection and other unexpected behaviour from crafted configs.
+const VALID_SENDER_PATTERN = /^[a-zA-Z0-9@._:+\-]{1,100}$/;
+
+function isValidSenderId(sender: string): boolean {
+  return VALID_SENDER_PATTERN.test(sender);
+}
+
 function isValidEntry(entry: unknown): entry is ChatAllowlistEntry {
   if (!entry || typeof entry !== 'object') return false;
   const e = entry as Record<string, unknown>;
   const validAllow =
     e.allow === '*' ||
-    (Array.isArray(e.allow) && e.allow.every((v) => typeof v === 'string'));
+    (Array.isArray(e.allow) &&
+      e.allow.every((v) => typeof v === 'string' && isValidSenderId(v)));
   const validMode = e.mode === 'trigger' || e.mode === 'drop';
   return validAllow && validMode;
 }

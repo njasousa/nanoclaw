@@ -17,6 +17,30 @@ import { request as httpRequest, RequestOptions } from 'http';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
+// Simple fixed-window rate limiter — prevents a compromised container from
+// making unlimited API calls. Resets per IP every RATE_LIMIT_WINDOW_MS.
+const RATE_LIMIT_MAX = 300;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX) {
+    logger.warn(
+      { ip, count: entry.count },
+      'Credential proxy rate limit exceeded',
+    );
+    return false;
+  }
+  return true;
+}
+
 export type AuthMode = 'api-key' | 'oauth';
 
 export interface ProxyConfig {
@@ -58,6 +82,13 @@ export function startCredentialProxy(
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      if (!checkRateLimit(clientIp)) {
+        res.writeHead(429, { 'content-type': 'text/plain' });
+        res.end('Too Many Requests');
+        return;
+      }
+
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {

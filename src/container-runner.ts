@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, execFile, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -23,7 +23,6 @@ import {
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
   readonlyMountArgs,
-  stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -76,15 +75,23 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
+    // Shadow secret files so the agent cannot read them from the mounted project root.
     // Credentials are injected by the credential proxy, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
+    const secretPaths: Array<[string, string]> = [
+      [path.join(projectRoot, '.env'), '/workspace/project/.env'],
+      [
+        path.join(projectRoot, 'data', 'env', 'env'),
+        '/workspace/project/data/env/env',
+      ],
+    ];
+    for (const [hostSecretPath, containerSecretPath] of secretPaths) {
+      if (fs.existsSync(hostSecretPath)) {
+        mounts.push({
+          hostPath: '/dev/null',
+          containerPath: containerSecretPath,
+          readonly: true,
+        });
+      }
     }
 
     // Main also gets its group folder as the working directory
@@ -368,7 +375,9 @@ export async function runContainerAgent(
                 { group: group.name },
                 'Container output failed schema validation, skipping',
               );
-              parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+              parseBuffer = parseBuffer.slice(
+                endIdx + OUTPUT_END_MARKER.length,
+              );
               continue;
             }
             if (parsed.newSessionId) {
@@ -425,15 +434,20 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn(
-            { group: group.name, containerName, err },
-            'Graceful stop failed, force killing',
-          );
-          container.kill('SIGKILL');
-        }
-      });
+      execFile(
+        CONTAINER_RUNTIME_BIN,
+        ['stop', containerName],
+        { timeout: 15000 },
+        (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        },
+      );
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -515,9 +529,14 @@ export async function runContainerAgent(
       const isError = code !== 0;
 
       if (isVerbose || isError) {
+        // Redact prompt in error logs to prevent user content leaking to disk.
+        // Verbose/debug mode retains the full prompt for development.
+        const inputToLog = isVerbose
+          ? input
+          : { ...input, prompt: `[${input.prompt.length} chars redacted]` };
         logLines.push(
           `=== Input ===`,
-          JSON.stringify(input, null, 2),
+          JSON.stringify(inputToLog, null, 2),
           ``,
           `=== Container Args ===`,
           containerArgs.join(' '),

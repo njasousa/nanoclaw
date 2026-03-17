@@ -79,6 +79,7 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger,
       browser: Browsers.macOS('Chrome'),
+      markOnlineOnConnect: false,
     });
 
     this.sock.ev.on('connection.update', (update) => {
@@ -127,9 +128,10 @@ export class WhatsAppChannel implements Channel {
         this.connected = true;
         logger.info('Connected to WhatsApp');
 
-        // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
-        this.sock.sendPresenceUpdate('available').catch((err) => {
-          logger.warn({ err }, 'Failed to send presence update');
+        // Signal to WhatsApp that this is a passive background session so the
+        // phone continues to receive push notifications.
+        this.sock.sendPresenceUpdate('unavailable').catch((err) => {
+          logger.warn({ err }, 'Failed to send unavailable presence');
         });
 
         // Build LID to phone mapping from auth state for self-chat translation

@@ -4,9 +4,9 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { sendPoolMessage } from './channels/telegram.js';
 
 const MAX_IPC_FILES_PER_CYCLE = 50;
-import { sendPoolMessage } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -125,7 +125,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   processingPath,
                   path.join(errorDir, `${sourceGroup}-${file}`),
                 );
-              } catch { /* already deleted */ }
+              } catch {
+                /* already deleted */
+              }
             }
           }
         }
@@ -147,6 +149,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             const processingPath = `${filePath}.processing`;
             try {
+              // Atomic rename before read: prevents TOCTOU race conditions
               fs.renameSync(filePath, processingPath);
             } catch {
               continue; // File already claimed by another cycle
@@ -168,7 +171,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   processingPath,
                   path.join(errorDir, `${sourceGroup}-${file}`),
                 );
-              } catch { /* already deleted */ }
+              } catch {
+                /* already deleted */
+              }
             }
           }
         }

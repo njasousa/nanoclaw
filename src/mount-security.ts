@@ -72,6 +72,20 @@ export function loadMountAllowlist(): MountAllowlist | null {
       return null;
     }
 
+    // Warn if the allowlist file is world-readable (mode & 0o004)
+    try {
+      const fileStat = fs.statSync(MOUNT_ALLOWLIST_PATH);
+      if ((fileStat.mode & 0o004) !== 0) {
+        logger.warn(
+          { path: MOUNT_ALLOWLIST_PATH },
+          'Mount allowlist is world-readable. Restrict with: chmod 600 ' +
+            MOUNT_ALLOWLIST_PATH,
+        );
+      }
+    } catch {
+      /* ignore permission check errors */
+    }
+
     const content = fs.readFileSync(MOUNT_ALLOWLIST_PATH, 'utf-8');
     const allowlist = JSON.parse(content) as MountAllowlist;
 

@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  HEALTH_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TELEGRAM_BOT_POOL,
@@ -11,6 +12,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { initBotPool } from './channels/telegram.js';
+import { createServer as createHttpServer } from 'http';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -20,6 +22,7 @@ import {
 import {
   ContainerOutput,
   runContainerAgent,
+  toTaskSnapshot,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
@@ -29,6 +32,7 @@ import {
   PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
+  closeDatabase,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -54,9 +58,9 @@ import {
   stopRemoteControl,
 } from './remote-control.js';
 import {
+  getCachedSenderAllowlist,
   isSenderAllowed,
   isTriggerAllowed,
-  loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
@@ -146,6 +150,18 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+function hasTriggerMessage(
+  messages: NewMessage[],
+  chatJid: string,
+): boolean {
+  const cfg = getCachedSenderAllowlist();
+  return messages.some(
+    (m) =>
+      TRIGGER_PATTERN.test(m.content.trim()) &&
+      (m.is_from_me || isTriggerAllowed(chatJid, m.sender, cfg)),
+  );
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -173,13 +189,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
-    const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = missedMessages.some(
-      (m) =>
-        TRIGGER_PATTERN.test(m.content.trim()) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-    );
-    if (!hasTrigger) return true;
+    if (!hasTriggerMessage(missedMessages, chatJid)) return true;
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
@@ -278,19 +288,7 @@ async function runAgent(
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
-  writeTasksSnapshot(
-    group.folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
+  writeTasksSnapshot(group.folder, isMain, tasks.map(toTaskSnapshot));
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
@@ -401,14 +399,7 @@ async function startMessageLoop(): Promise<void> {
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
           if (needsTrigger) {
-            const allowlistCfg = loadSenderAllowlist();
-            const hasTrigger = groupMessages.some(
-              (m) =>
-                TRIGGER_PATTERN.test(m.content.trim()) &&
-                (m.is_from_me ||
-                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-            );
-            if (!hasTrigger) continue;
+            if (!hasTriggerMessage(groupMessages, chatJid)) continue;
           }
 
           // Pull all messages since lastAgentTimestamp so non-trigger
@@ -485,12 +476,33 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  // Optional health check endpoint
+  let healthServer: ReturnType<typeof createHttpServer> | null = null;
+  if (HEALTH_PORT > 0) {
+    healthServer = createHttpServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          uptime: process.uptime(),
+          groups: Object.keys(registeredGroups).length,
+          channels: channels.length,
+        }),
+      );
+    });
+    healthServer.listen(HEALTH_PORT, '127.0.0.1', () => {
+      logger.info({ port: HEALTH_PORT }, 'Health check server started');
+    });
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    healthServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
+    closeDatabase();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -552,7 +564,7 @@ async function main(): Promise<void> {
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
-        const cfg = loadSenderAllowlist();
+        const cfg = getCachedSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
           !isSenderAllowed(chatJid, msg.sender, cfg)

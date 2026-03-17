@@ -79,6 +79,9 @@ export const TRIGGER_PATTERN = new RegExp(
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// Health check HTTP server (0 = disabled)
+export const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || '0', 10);
+
 export const TELEGRAM_BOT_POOL = (
   process.env.TELEGRAM_BOT_POOL ||
   envConfig.TELEGRAM_BOT_POOL ||

@@ -26,7 +26,7 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup, ScheduledTask } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -681,18 +681,33 @@ export async function runContainerAgent(
   });
 }
 
+export interface TaskSnapshot {
+  id: string;
+  groupFolder: string;
+  prompt: string;
+  schedule_type: string;
+  schedule_value: string;
+  status: string;
+  next_run: string | null;
+}
+
+/** Maps a ScheduledTask to the snapshot format written to the container. */
+export function toTaskSnapshot(t: ScheduledTask): TaskSnapshot {
+  return {
+    id: t.id,
+    groupFolder: t.group_folder,
+    prompt: t.prompt,
+    schedule_type: t.schedule_type,
+    schedule_value: t.schedule_value,
+    status: t.status,
+    next_run: t.next_run,
+  };
+}
+
 export function writeTasksSnapshot(
   groupFolder: string,
   isMain: boolean,
-  tasks: Array<{
-    id: string;
-    groupFolder: string;
-    prompt: string;
-    schedule_type: string;
-    schedule_value: string;
-    status: string;
-    next_run: string | null;
-  }>,
+  tasks: TaskSnapshot[],
 ): void {
   // Write filtered tasks to the group's IPC directory
   const groupIpcDir = resolveGroupIpcPath(groupFolder);

@@ -152,6 +152,14 @@ export function initDatabase(): void {
   migrateJsonState();
 }
 
+export function closeDatabase(): void {
+  try {
+    db.close();
+  } catch {
+    // ignore errors on close
+  }
+}
+
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');

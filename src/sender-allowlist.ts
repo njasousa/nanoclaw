@@ -39,6 +39,27 @@ function isValidEntry(entry: unknown): entry is ChatAllowlistEntry {
   return validAllow && validMode;
 }
 
+const CACHE_TTL_MS = 30_000;
+let _cachedConfig: SenderAllowlistConfig | null = null;
+let _cacheLoadedAt = 0;
+
+/** Returns the cached allowlist, reloading from disk every 30 seconds. */
+export function getCachedSenderAllowlist(): SenderAllowlistConfig {
+  const now = Date.now();
+  if (_cachedConfig && now - _cacheLoadedAt < CACHE_TTL_MS) {
+    return _cachedConfig;
+  }
+  _cachedConfig = loadSenderAllowlist();
+  _cacheLoadedAt = now;
+  return _cachedConfig;
+}
+
+/** @internal - for tests only. */
+export function _resetAllowlistCache(): void {
+  _cachedConfig = null;
+  _cacheLoadedAt = 0;
+}
+
 export function loadSenderAllowlist(
   pathOverride?: string,
 ): SenderAllowlistConfig {

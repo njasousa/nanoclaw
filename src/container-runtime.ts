@@ -37,7 +37,8 @@ function detectProxyBindHost(): string {
     const ipv4 = docker0.find((a) => a.family === 'IPv4');
     if (ipv4) return ipv4.address;
   }
-  return '0.0.0.0';
+  // Fallback: bind to loopback only — safer than 0.0.0.0
+  return '127.0.0.1';
 }
 
 /** CLI args needed for the container to resolve the host gateway. */
@@ -59,7 +60,7 @@ export function readonlyMountArgs(
 
 /** Returns the shell command to stop a container by name. */
 export function stopContainer(name: string): string {
-  return `${CONTAINER_RUNTIME_BIN} stop ${name}`;
+  return `${CONTAINER_RUNTIME_BIN} stop "${name}"`;
 }
 
 /** Ensure the container runtime is running, starting it if needed. */

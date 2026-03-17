@@ -24,7 +24,7 @@ const STDERR_FILE = path.join(DATA_DIR, 'remote-control.stderr');
 
 function saveState(session: RemoteControlSession): void {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(session));
+  fs.writeFileSync(STATE_FILE, JSON.stringify(session), { mode: 0o600 });
 }
 
 function clearState(): void {

@@ -60,8 +60,11 @@ export class TelegramChannel implements Channel {
       },
     });
 
-    // Command to get chat ID (useful for registration)
+    // Command to get chat ID (useful for registration) — registered chats only
     this.bot.command('chatid', (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      if (!this.opts.registeredGroups()[chatJid]) return;
+
       const chatId = ctx.chat.id;
       const chatType = ctx.chat.type;
       const chatName =

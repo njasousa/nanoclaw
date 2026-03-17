@@ -4,6 +4,8 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+
+const MAX_IPC_FILES_PER_CYCLE = 50;
 import { sendPoolMessage } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
@@ -69,7 +71,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
         if (fs.existsSync(messagesDir)) {
           const messageFiles = fs
             .readdirSync(messagesDir)
-            .filter((f) => f.endsWith('.json'));
+            .filter((f) => f.endsWith('.json'))
+            .slice(0, MAX_IPC_FILES_PER_CYCLE);
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
             try {
@@ -129,7 +132,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
         if (fs.existsSync(tasksDir)) {
           const taskFiles = fs
             .readdirSync(tasksDir)
-            .filter((f) => f.endsWith('.json'));
+            .filter((f) => f.endsWith('.json'))
+            .slice(0, MAX_IPC_FILES_PER_CYCLE);
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
             try {

@@ -359,6 +359,18 @@ export async function runContainerAgent(
 
           try {
             const parsed: ContainerOutput = JSON.parse(jsonStr);
+            if (
+              typeof parsed !== 'object' ||
+              parsed === null ||
+              (parsed.status !== 'success' && parsed.status !== 'error')
+            ) {
+              logger.warn(
+                { group: group.name },
+                'Container output failed schema validation, skipping',
+              );
+              parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+              continue;
+            }
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
@@ -596,6 +608,14 @@ export async function runContainerAgent(
         }
 
         const output: ContainerOutput = JSON.parse(jsonLine);
+
+        if (
+          typeof output !== 'object' ||
+          output === null ||
+          (output.status !== 'success' && output.status !== 'error')
+        ) {
+          throw new Error('Container output failed schema validation');
+        }
 
         logger.info(
           {

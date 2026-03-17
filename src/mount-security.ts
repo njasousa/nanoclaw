@@ -154,16 +154,13 @@ function matchesBlockedPattern(
   const pathParts = realPath.split(path.sep);
 
   for (const pattern of blockedPatterns) {
-    // Check if any path component matches the pattern
+    // Check if any path component exactly matches the pattern.
+    // Using === (not includes) to avoid false positives like
+    // blocking ".aws-projects" because of a ".aws" pattern.
     for (const part of pathParts) {
-      if (part === pattern || part.includes(pattern)) {
+      if (part === pattern) {
         return pattern;
       }
-    }
-
-    // Also check if the full path contains the pattern
-    if (realPath.includes(pattern)) {
-      return pattern;
     }
   }
 

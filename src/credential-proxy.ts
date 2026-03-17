@@ -32,7 +32,10 @@ function checkRateLimit(ip: string): boolean {
   }
   entry.count++;
   if (entry.count > RATE_LIMIT_MAX) {
-    logger.warn({ ip, count: entry.count }, 'Credential proxy rate limit exceeded');
+    logger.warn(
+      { ip, count: entry.count },
+      'Credential proxy rate limit exceeded',
+    );
     return false;
   }
   return true;

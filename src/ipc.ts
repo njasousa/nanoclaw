@@ -80,8 +80,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
               // where a container replaces a file with a symlink between readdir and read.
               const stat = fs.lstatSync(filePath);
               if (!stat.isFile()) {
-                logger.warn({ file, sourceGroup }, 'IPC message file is not a regular file, skipping');
-                try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+                logger.warn(
+                  { file, sourceGroup },
+                  'IPC message file is not a regular file, skipping',
+                );
+                try {
+                  fs.unlinkSync(filePath);
+                } catch {
+                  /* ignore */
+                }
                 continue;
               }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -148,8 +155,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
               // Symlink guard: only process regular files to prevent TOCTOU attacks.
               const stat = fs.lstatSync(filePath);
               if (!stat.isFile()) {
-                logger.warn({ file, sourceGroup }, 'IPC task file is not a regular file, skipping');
-                try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+                logger.warn(
+                  { file, sourceGroup },
+                  'IPC task file is not a regular file, skipping',
+                );
+                try {
+                  fs.unlinkSync(filePath);
+                } catch {
+                  /* ignore */
+                }
                 continue;
               }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));

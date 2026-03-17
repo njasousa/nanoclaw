@@ -79,7 +79,10 @@ function buildVolumeMounts(
     // Credentials are injected by the credential proxy, never exposed to containers.
     const secretPaths: Array<[string, string]> = [
       [path.join(projectRoot, '.env'), '/workspace/project/.env'],
-      [path.join(projectRoot, 'data', 'env', 'env'), '/workspace/project/data/env/env'],
+      [
+        path.join(projectRoot, 'data', 'env', 'env'),
+        '/workspace/project/data/env/env',
+      ],
     ];
     for (const [hostSecretPath, containerSecretPath] of secretPaths) {
       if (fs.existsSync(hostSecretPath)) {
@@ -429,15 +432,20 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      execFile(CONTAINER_RUNTIME_BIN, ['stop', containerName], { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn(
-            { group: group.name, containerName, err },
-            'Graceful stop failed, force killing',
-          );
-          container.kill('SIGKILL');
-        }
-      });
+      execFile(
+        CONTAINER_RUNTIME_BIN,
+        ['stop', containerName],
+        { timeout: 15000 },
+        (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        },
+      );
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);

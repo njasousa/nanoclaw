@@ -256,8 +256,8 @@ export async function processTaskIpc(
             nextRun = interval.next().toISOString();
           } catch {
             logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid cron expression',
+              { scheduleValue: data.schedule_value, sourceGroup },
+              'IPC schedule_task rejected: invalid cron expression — request dropped',
             );
             break;
           }
@@ -265,8 +265,8 @@ export async function processTaskIpc(
           const ms = parseInt(data.schedule_value, 10);
           if (isNaN(ms) || ms <= 0) {
             logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid interval',
+              { scheduleValue: data.schedule_value, sourceGroup },
+              'IPC schedule_task rejected: invalid interval — request dropped',
             );
             break;
           }

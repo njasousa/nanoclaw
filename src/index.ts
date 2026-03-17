@@ -352,45 +352,33 @@ async function startMessageLoop(): Promise<void> {
 
   logger.info(`NanoClaw running (trigger: @${ASSISTANT_NAME})`);
 
-  while (true) {
-    try {
-      const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(
-        jids,
-        lastTimestamp,
-        ASSISTANT_NAME,
-      );
+  try {
+    while (true) {
+      try {
+        const jids = Object.keys(registeredGroups);
+        const { messages, newTimestamp } = getNewMessages(
+          jids,
+          lastTimestamp,
+          ASSISTANT_NAME,
+        );
 
-      if (messages.length > 0) {
-        logger.info({ count: messages.length }, 'New messages');
+        if (messages.length > 0) {
+          logger.info({ count: messages.length }, 'New messages');
 
-        // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
-        saveState();
+          // Advance the "seen" cursor for all messages immediately
+          lastTimestamp = newTimestamp;
+          saveState();
 
-        // Deduplicate by group
-        const messagesByGroup = new Map<string, NewMessage[]>();
-        for (const msg of messages) {
-          const existing = messagesByGroup.get(msg.chat_jid);
-          if (existing) {
-            existing.push(msg);
-          } else {
-            messagesByGroup.set(msg.chat_jid, [msg]);
+          // Deduplicate by group
+          const messagesByGroup = new Map<string, NewMessage[]>();
+          for (const msg of messages) {
+            const existing = messagesByGroup.get(msg.chat_jid);
+            if (existing) {
+              existing.push(msg);
+            } else {
+              messagesByGroup.set(msg.chat_jid, [msg]);
+            }
           }
-        }
-
-        for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
-          if (!group) continue;
-
-          const channel = findChannel(channels, chatJid);
-          if (!channel) {
-            logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
-            continue;
-          }
-
-          const isMainGroup = group.isMain === true;
-          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
 
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
@@ -430,10 +418,14 @@ async function startMessageLoop(): Promise<void> {
           }
         }
       }
-    } catch (err) {
-      logger.error({ err }, 'Error in message loop');
+      } catch (err) {
+        logger.error({ err }, 'Error in message loop');
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+  } finally {
+    // Reset flag so the loop can be restarted if it ever exits unexpectedly
+    messageLoopRunning = false;
   }
 }
 

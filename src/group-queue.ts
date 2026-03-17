@@ -31,7 +31,7 @@ interface GroupState {
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
-  private waitingGroups: string[] = [];
+  private waitingGroups = new Set<string>();
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private shuttingDown = false;
@@ -73,9 +73,7 @@ export class GroupQueue {
 
     if (this.activeCount >= MAX_CONCURRENT_CONTAINERS) {
       state.pendingMessages = true;
-      if (!this.waitingGroups.includes(groupJid)) {
-        this.waitingGroups.push(groupJid);
-      }
+      this.waitingGroups.add(groupJid);
       logger.debug(
         { groupJid, activeCount: this.activeCount },
         'At concurrency limit, message queued',
@@ -114,9 +112,7 @@ export class GroupQueue {
 
     if (this.activeCount >= MAX_CONCURRENT_CONTAINERS) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      if (!this.waitingGroups.includes(groupJid)) {
-        this.waitingGroups.push(groupJid);
-      }
+      this.waitingGroups.add(groupJid);
       logger.debug(
         { groupJid, taskId, activeCount: this.activeCount },
         'At concurrency limit, task queued',
@@ -318,10 +314,11 @@ export class GroupQueue {
 
   private drainWaiting(): void {
     while (
-      this.waitingGroups.length > 0 &&
+      this.waitingGroups.size > 0 &&
       this.activeCount < MAX_CONCURRENT_CONTAINERS
     ) {
-      const nextJid = this.waitingGroups.shift()!;
+      const nextJid = this.waitingGroups.values().next().value!;
+      this.waitingGroups.delete(nextJid);
       const state = this.getGroup(nextJid);
 
       // Prioritize tasks over messages
@@ -350,12 +347,22 @@ export class GroupQueue {
 
     // Count active containers but don't kill them — they'll finish on their own
     // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
     const activeContainers: string[] = [];
-    for (const [jid, state] of this.groups) {
+    let pendingTaskCount = 0;
+    let pendingMessageCount = 0;
+    for (const [, state] of this.groups) {
       if (state.process && !state.process.killed && state.containerName) {
         activeContainers.push(state.containerName);
       }
+      pendingTaskCount += state.pendingTasks.length;
+      if (state.pendingMessages) pendingMessageCount++;
+    }
+
+    if (pendingTaskCount > 0 || pendingMessageCount > 0) {
+      logger.warn(
+        { pendingTaskCount, pendingMessageCount },
+        'GroupQueue shutting down with pending work — tasks/messages will be recovered on next start',
+      );
     }
 
     logger.info(

@@ -333,6 +333,45 @@ export async function runContainerAgent(
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
 
+    // Declare timeout state before event handlers to avoid TDZ issues
+    // (handlers close over these variables; declaring after registration works
+    // only by async luck — explicit ordering makes the intent clear).
+    let timedOut = false;
+    let hadStreamingOutput = false;
+    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
+    // graceful _close sentinel has time to trigger before the hard kill fires.
+    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+
+    const killOnTimeout = () => {
+      timedOut = true;
+      logger.error(
+        { group: group.name, containerName },
+        'Container timeout, stopping gracefully',
+      );
+      execFile(
+        CONTAINER_RUNTIME_BIN,
+        ['stop', containerName],
+        { timeout: 15000 },
+        (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        },
+      );
+    };
+
+    let timeout = setTimeout(killOnTimeout, timeoutMs);
+
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(killOnTimeout, timeoutMs);
+    };
+
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
 
@@ -420,43 +459,6 @@ export async function runContainerAgent(
         stderr += chunk;
       }
     });
-
-    let timedOut = false;
-    let hadStreamingOutput = false;
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
-    // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
-
-    const killOnTimeout = () => {
-      timedOut = true;
-      logger.error(
-        { group: group.name, containerName },
-        'Container timeout, stopping gracefully',
-      );
-      execFile(
-        CONTAINER_RUNTIME_BIN,
-        ['stop', containerName],
-        { timeout: 15000 },
-        (err) => {
-          if (err) {
-            logger.warn(
-              { group: group.name, containerName, err },
-              'Graceful stop failed, force killing',
-            );
-            container.kill('SIGKILL');
-          }
-        },
-      );
-    };
-
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
-
-    // Reset the timeout whenever there's activity (streaming output)
-    const resetTimeout = () => {
-      clearTimeout(timeout);
-      timeout = setTimeout(killOnTimeout, timeoutMs);
-    };
 
     container.on('close', (code) => {
       clearTimeout(timeout);
@@ -610,12 +612,12 @@ export async function runContainerAgent(
       }
 
       // Legacy mode: parse the last output marker pair from accumulated stdout
+      let jsonLine = '';
       try {
         // Extract JSON between sentinel markers for robust parsing
         const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
         const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
 
-        let jsonLine: string;
         if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
           jsonLine = stdout
             .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
@@ -651,8 +653,9 @@ export async function runContainerAgent(
         logger.error(
           {
             group: group.name,
-            stdout,
-            stderr,
+            jsonLine: jsonLine.slice(0, 500), // log the offending JSON for debugging
+            stdout: stdout.slice(-1000),
+            stderr: stderr.slice(-500),
             error: err,
           },
           'Failed to parse container output',

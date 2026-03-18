@@ -380,6 +380,19 @@ async function startMessageLoop(): Promise<void> {
             }
           }
 
+        for (const [chatJid, groupMessages] of messagesByGroup) {
+          const group = registeredGroups[chatJid];
+          if (!group) continue;
+
+          const channel = findChannel(channels, chatJid);
+          if (!channel) {
+            logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
+            continue;
+          }
+
+          const isMainGroup = group.isMain === true;
+          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.

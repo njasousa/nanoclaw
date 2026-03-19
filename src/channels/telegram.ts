@@ -272,7 +272,10 @@ export class TelegramChannel implements Channel {
           logger.info({ chatJid, localPath }, 'Telegram photo downloaded');
         }
       } catch (err) {
-        logger.warn({ err }, 'Failed to download Telegram photo, using placeholder');
+        logger.warn(
+          { err },
+          'Failed to download Telegram photo, using placeholder',
+        );
       }
 
       this.opts.onMessage(chatJid, {
@@ -288,8 +291,66 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
+    this.bot.on('message:document', async (ctx) => {
+      const doc = ctx.message.document;
+      const name = doc?.file_name || 'file';
+      const mime = doc?.mime_type || '';
+
+      // PDF: download and save for pdf-reader tool
+      if (mime === 'application/pdf' && doc) {
+        const chatJid = `tg:${ctx.chat.id}`;
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) return;
+
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          ctx.from?.id?.toString() ||
+          'Unknown';
+        const caption = ctx.message.caption || '';
+        const isGroup =
+          ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'telegram',
+          isGroup,
+        );
+
+        let content = `[Document: ${name}]`;
+        try {
+          const file = await ctx.api.getFile(doc.file_id);
+          if (file.file_path) {
+            const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+            const groupDir = resolveGroupFolderPath(group.folder);
+            const attachDir = path.join(groupDir, 'attachments');
+            fs.mkdirSync(attachDir, { recursive: true });
+            const filename = path.basename(name);
+            const filePath = path.join(attachDir, filename);
+            await downloadFile(downloadUrl, filePath);
+            const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
+            const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
+            content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+            logger.info({ chatJid, filename }, 'Telegram PDF downloaded');
+          }
+        } catch (err) {
+          logger.warn({ err, chatJid }, 'PDF - download failed');
+        }
+
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+        return;
+      }
+
       storeNonText(ctx, `[Document: ${name}]`);
     });
     this.bot.on('message:sticker', (ctx) => {

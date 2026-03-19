@@ -1,8 +1,12 @@
+import fs from 'fs';
 import https from 'https';
+import path from 'path';
+
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -11,6 +15,29 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+
+/** Download a URL to a local file path using the native https module. */
+function downloadFile(url: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https
+      .get(url, (res) => {
+        if (res.statusCode !== 200) {
+          file.destroy();
+          fs.unlink(dest, () => {});
+          reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
+          return;
+        }
+        res.pipe(file);
+        file.on('finish', () => file.close(() => resolve()));
+      })
+      .on('error', (err) => {
+        file.destroy();
+        fs.unlink(dest, () => {});
+        reject(err);
+      });
+  });
+}
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -202,7 +229,62 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+      if (!group) return;
+
+      // Pick the highest-resolution variant (last in the array)
+      const photos = ctx.message.photo;
+      const best = photos[photos.length - 1];
+      let content = `[Photo]${caption}`;
+
+      try {
+        const file = await ctx.getFile();
+        if (file.file_path) {
+          const mediaDir = path.join(
+            resolveGroupFolderPath(group.folder),
+            'media',
+          );
+          fs.mkdirSync(mediaDir, { recursive: true });
+          const filename = `${ctx.message.message_id}_${best.file_id.slice(-8)}.jpg`;
+          const localPath = path.join(mediaDir, filename);
+          const containerPath = `/workspace/group/media/${filename}`;
+          const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+          await downloadFile(fileUrl, localPath);
+          content = `[Photo: ${containerPath}]${caption}`;
+          logger.info({ chatJid, localPath }, 'Telegram photo downloaded');
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to download Telegram photo, using placeholder');
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));

@@ -170,6 +170,20 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Mount the host's .claude.json so Claude Code can authenticate inside containers.
+  // Required since Claude Code 2.1.x changed from directory-only to file-based auth config.
+  const hostClaudeJson = path.join(
+    process.env.HOME || '/Users/' + process.env.USER,
+    '.claude.json',
+  );
+  if (fs.existsSync(hostClaudeJson)) {
+    mounts.push({
+      hostPath: hostClaudeJson,
+      containerPath: '/home/node/.claude.json',
+      readonly: true,
+    });
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);

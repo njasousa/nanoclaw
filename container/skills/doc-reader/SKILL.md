@@ -1,6 +1,6 @@
 # Doc Reader
 
-Extract text from Excel (.xlsx, .xls) and Word (.docx) files.
+Extract text from Excel (.xlsx, .xls), Word (.docx), and PowerPoint (.pptx) files.
 
 ## Quick start
 
@@ -8,9 +8,10 @@ Extract text from Excel (.xlsx, .xls) and Word (.docx) files.
 doc-reader extract attachments/report.xlsx      # Extract all sheets
 doc-reader extract attachments/report.xlsx --sheet Sheet2  # Specific sheet
 doc-reader extract attachments/letter.docx      # Extract Word text
+doc-reader extract attachments/slides.pptx      # Extract PowerPoint slides
 doc-reader sheets attachments/data.xlsx         # List sheet names
 doc-reader info attachments/file.xlsx           # File metadata
-doc-reader list                                 # Find all Excel/Word files
+doc-reader list                                 # Find all Excel/Word/PowerPoint files
 ```
 
 ## Commands
@@ -38,17 +39,17 @@ doc-reader info <file>
 
 Shows file size, type, sheet names (Excel) or paragraph/table count (Word).
 
-### list — Find all Excel/Word files
+### list — Find all Excel/Word/PowerPoint files
 
 ```bash
 doc-reader list
 ```
 
-Recursively lists all `.xlsx`, `.xls`, `.docx` files with size.
+Recursively lists all `.xlsx`, `.xls`, `.docx`, `.pptx` files with size.
 
 ## When attachments are sent
 
-When a user sends an Excel or Word file, it is saved to the `attachments/` directory.
+When a user sends an Excel, Word, or PowerPoint file, it is saved to the `attachments/` directory.
 Check with `doc-reader list` to confirm, then extract with `doc-reader extract`.
 
 ## Example workflows
@@ -71,4 +72,11 @@ doc-reader extract attachments/data.xlsx --sheet "Sales 2025"
 
 ```bash
 doc-reader extract attachments/contract.docx
+```
+
+### Read a PowerPoint presentation
+
+```bash
+doc-reader info attachments/slides.pptx         # Check slide count
+doc-reader extract attachments/slides.pptx      # Extract all slide text
 ```

@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""doc-reader — Extract text from Excel and Word files."""
+"""doc-reader — Extract text from Excel, Word, and PowerPoint files."""
 
 import sys
 import os
 
 def usage():
-    print("""doc-reader — Extract text from Excel (.xlsx/.xls) and Word (.docx) files
+    print("""doc-reader — Extract text from Excel (.xlsx/.xls), Word (.docx), and PowerPoint (.pptx) files
 
 Usage:
   doc-reader extract <file>          # Extract all text
   doc-reader sheets <file>           # List sheet names (Excel only)
   doc-reader extract <file> --sheet <name>  # Extract specific sheet (Excel)
-  doc-reader list                    # List all Excel/Word files in directory tree
+  doc-reader list                    # List all Excel/Word/PowerPoint files in directory tree
   doc-reader info <file>             # Show file metadata
 
 Examples:
   doc-reader extract attachments/report.xlsx
   doc-reader extract attachments/report.xlsx --sheet Sheet2
   doc-reader extract attachments/letter.docx
+  doc-reader extract attachments/presentation.pptx
   doc-reader sheets attachments/data.xlsx
   doc-reader list
 """)
@@ -84,16 +85,29 @@ def extract_docx(filepath):
             if any(cells):
                 print('\t'.join(cells))
 
+def extract_pptx(filepath):
+    from pptx import Presentation
+    prs = Presentation(filepath)
+    for i, slide in enumerate(prs.slides, 1):
+        print(f"=== Slide {i} ===")
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        print(text)
+        print()
+
 def list_files():
     import glob
     found = False
-    for ext in ('*.xlsx', '*.xls', '*.docx', '*.XLSX', '*.XLS', '*.DOCX'):
+    for ext in ('*.xlsx', '*.xls', '*.docx', '*.pptx', '*.XLSX', '*.XLS', '*.DOCX', '*.PPTX'):
         for f in sorted(glob.glob(f'**/{ext}', recursive=True)):
             size_kb = round(os.path.getsize(f) / 1024)
             print(f"{f} ({size_kb}KB)")
             found = True
     if not found:
-        print("No Excel or Word files found.")
+        print("No Excel, Word, or PowerPoint files found.")
 
 def info_file(filepath):
     ext = os.path.splitext(filepath)[1].lower()
@@ -113,6 +127,11 @@ def info_file(filepath):
         print(f"Type: Word (docx)")
         print(f"Paragraphs: {len(doc.paragraphs)}")
         print(f"Tables: {len(doc.tables)}")
+    elif ext in ('.pptx',):
+        from pptx import Presentation
+        prs = Presentation(filepath)
+        print(f"Type: PowerPoint (pptx)")
+        print(f"Slides: {len(prs.slides)}")
 
 def main():
     args = sys.argv[1:]
@@ -174,8 +193,10 @@ def main():
             extract_xls(filepath, sheet_name)
         elif ext == '.docx':
             extract_docx(filepath)
+        elif ext == '.pptx':
+            extract_pptx(filepath)
         else:
-            print(f"Error: unsupported file type '{ext}'. Supported: .xlsx, .xls, .docx", file=sys.stderr)
+            print(f"Error: unsupported file type '{ext}'. Supported: .xlsx, .xls, .docx, .pptx", file=sys.stderr)
             sys.exit(1)
         return
 

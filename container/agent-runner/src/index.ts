@@ -291,6 +291,10 @@ function shouldClose(): boolean {
   return false;
 }
 
+// Track files that failed to read so we skip ghost entries from VirtioFS cache
+const ipcFailedFiles = new Map<string, number>(); // filename -> fail count
+const IPC_MAX_FAILURES = 40; // skip after this many consecutive failures (~20s at 500ms poll)
+
 /**
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
@@ -304,16 +308,32 @@ function drainIpcInput(): string[] {
 
     const messages: string[] = [];
     for (const file of files) {
+      // Skip ghost files that have exceeded max failures (VirtioFS stale entries)
+      const failures = ipcFailedFiles.get(file) || 0;
+      if (failures >= IPC_MAX_FAILURES) {
+        continue;
+      }
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
+        ipcFailedFiles.delete(file);
         if (data.type === 'message' && data.text) {
           messages.push(data.text);
         }
       } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+        const newCount = failures + 1;
+        ipcFailedFiles.set(file, newCount);
+        if (newCount >= IPC_MAX_FAILURES) {
+          // Persistent failure — likely a VirtioFS ghost entry that will never be readable.
+          // Only NOW delete it so we don't accidentally destroy a real file that was
+          // transiently unreadable (VirtioFS sync lag).
+          log(`Giving up on input file ${file} after ${IPC_MAX_FAILURES} failures — deleting`);
+          try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+        } else {
+          // Transient failure (VirtioFS not yet synced) — leave the file and retry next poll.
+          log(`Failed to process input file ${file} (attempt ${newCount}/${IPC_MAX_FAILURES}): ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
     return messages;

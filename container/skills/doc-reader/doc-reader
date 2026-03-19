@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""doc-reader — Extract text from Excel and Word files."""
+
+import sys
+import os
+
+def usage():
+    print("""doc-reader — Extract text from Excel (.xlsx/.xls) and Word (.docx) files
+
+Usage:
+  doc-reader extract <file>          # Extract all text
+  doc-reader sheets <file>           # List sheet names (Excel only)
+  doc-reader extract <file> --sheet <name>  # Extract specific sheet (Excel)
+  doc-reader list                    # List all Excel/Word files in directory tree
+  doc-reader info <file>             # Show file metadata
+
+Examples:
+  doc-reader extract attachments/report.xlsx
+  doc-reader extract attachments/report.xlsx --sheet Sheet2
+  doc-reader extract attachments/letter.docx
+  doc-reader sheets attachments/data.xlsx
+  doc-reader list
+""")
+
+def extract_excel(filepath, sheet_name=None):
+    import openpyxl
+    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+    sheets = wb.sheetnames
+
+    if sheet_name:
+        if sheet_name not in sheets:
+            print(f"Error: sheet '{sheet_name}' not found. Available: {', '.join(sheets)}", file=sys.stderr)
+            sys.exit(1)
+        sheets_to_read = [sheet_name]
+    else:
+        sheets_to_read = sheets
+
+    for name in sheets_to_read:
+        ws = wb[name]
+        if len(sheets_to_read) > 1:
+            print(f"=== Sheet: {name} ===")
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else '' for c in row]
+            # Skip entirely empty rows
+            if any(c.strip() for c in cells):
+                print('\t'.join(cells))
+        if len(sheets_to_read) > 1:
+            print()
+
+def extract_xls(filepath, sheet_name=None):
+    try:
+        import xlrd
+    except ImportError:
+        print("Error: xlrd not installed. Try: pip3 install xlrd", file=sys.stderr)
+        sys.exit(1)
+    wb = xlrd.open_workbook(filepath)
+    if sheet_name:
+        sheets = [wb.sheet_by_name(sheet_name)]
+        names = [sheet_name]
+    else:
+        sheets = [wb.sheet_by_index(i) for i in range(wb.nsheets)]
+        names = wb.sheet_names()
+
+    for name, ws in zip(names, sheets):
+        if len(sheets) > 1:
+            print(f"=== Sheet: {name} ===")
+        for r in range(ws.nrows):
+            cells = [str(ws.cell_value(r, c)) for c in range(ws.ncols)]
+            if any(c.strip() for c in cells):
+                print('\t'.join(cells))
+        if len(sheets) > 1:
+            print()
+
+def extract_docx(filepath):
+    from docx import Document
+    doc = Document(filepath)
+    for para in doc.paragraphs:
+        if para.text.strip():
+            print(para.text)
+    # Also extract tables
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):
+                print('\t'.join(cells))
+
+def list_files():
+    import glob
+    found = False
+    for ext in ('*.xlsx', '*.xls', '*.docx', '*.XLSX', '*.XLS', '*.DOCX'):
+        for f in sorted(glob.glob(f'**/{ext}', recursive=True)):
+            size_kb = round(os.path.getsize(f) / 1024)
+            print(f"{f} ({size_kb}KB)")
+            found = True
+    if not found:
+        print("No Excel or Word files found.")
+
+def info_file(filepath):
+    ext = os.path.splitext(filepath)[1].lower()
+    size_kb = round(os.path.getsize(filepath) / 1024)
+    print(f"File: {filepath}")
+    print(f"Size: {size_kb}KB")
+    if ext in ('.xlsx',):
+        import openpyxl
+        wb = openpyxl.load_workbook(filepath, read_only=True)
+        print(f"Type: Excel (xlsx)")
+        print(f"Sheets: {', '.join(wb.sheetnames)}")
+    elif ext in ('.xls',):
+        print(f"Type: Excel (xls)")
+    elif ext in ('.docx',):
+        from docx import Document
+        doc = Document(filepath)
+        print(f"Type: Word (docx)")
+        print(f"Paragraphs: {len(doc.paragraphs)}")
+        print(f"Tables: {len(doc.tables)}")
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ('help', '--help', '-h'):
+        usage()
+        sys.exit(0)
+
+    cmd = args[0]
+
+    if cmd == 'list':
+        list_files()
+        return
+
+    if cmd in ('extract', 'sheets', 'info') and len(args) < 2:
+        print(f"Error: {cmd} requires a file argument", file=sys.stderr)
+        sys.exit(1)
+
+    filepath = args[1]
+    if not os.path.exists(filepath):
+        print(f"Error: file not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    ext = os.path.splitext(filepath)[1].lower()
+
+    if cmd == 'info':
+        info_file(filepath)
+        return
+
+    if cmd == 'sheets':
+        if ext == '.xlsx':
+            import openpyxl
+            wb = openpyxl.load_workbook(filepath, read_only=True)
+            for name in wb.sheetnames:
+                print(name)
+        elif ext == '.xls':
+            try:
+                import xlrd
+                wb = xlrd.open_workbook(filepath)
+                for name in wb.sheet_names():
+                    print(name)
+            except ImportError:
+                print("Error: xlrd not installed", file=sys.stderr)
+                sys.exit(1)
+        else:
+            print(f"Error: sheets command only applies to Excel files (.xlsx/.xls)", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if cmd == 'extract':
+        sheet_name = None
+        if '--sheet' in args:
+            idx = args.index('--sheet')
+            if idx + 1 < len(args):
+                sheet_name = args[idx + 1]
+
+        if ext == '.xlsx':
+            extract_excel(filepath, sheet_name)
+        elif ext == '.xls':
+            extract_xls(filepath, sheet_name)
+        elif ext == '.docx':
+            extract_docx(filepath)
+        else:
+            print(f"Error: unsupported file type '{ext}'. Supported: .xlsx, .xls, .docx", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    print(f"Error: unknown command '{cmd}'", file=sys.stderr)
+    usage()
+    sys.exit(1)
+
+if __name__ == '__main__':
+    main()

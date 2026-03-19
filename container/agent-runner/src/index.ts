@@ -360,23 +360,17 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(prompt);
 
-  // Load image attachments and send as multimodal content blocks
+  // When images are present, append their paths to the prompt so the agent
+  // can view them using the Read tool (which supports PNG/JPG natively).
+  // Sending ContentBlock[] via the message stream causes EPIPE in claude CLI.
   if (containerInput.imageAttachments?.length) {
-    const blocks: ContentBlock[] = [];
-    for (const img of containerInput.imageAttachments) {
-      const imgPath = path.join('/workspace/group', img.relativePath);
-      try {
-        const data = fs.readFileSync(imgPath).toString('base64');
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data } });
-      } catch (err) {
-        log(`Failed to load image: ${imgPath}`);
-      }
-    }
-    if (blocks.length > 0) {
-      stream.pushMultimodal(blocks);
-    }
+    const paths = containerInput.imageAttachments
+      .map(img => `/workspace/group/${img.relativePath}`)
+      .join('\n- ');
+    stream.push(`${prompt}\n\n[Images attached — use the Read tool to view them:\n- ${paths}\n]`);
+  } else {
+    stream.push(prompt);
   }
 
   // Poll IPC for follow-up messages and _close sentinel during the query
@@ -538,6 +532,13 @@ async function main(): Promise<void> {
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
   let sessionId = containerInput.sessionId;
+  // The SDK crashes with EPIPE when resuming a session with multimodal content blocks.
+  // Start a fresh session when images are present; the new session ID is saved at the end
+  // so subsequent text messages can resume normally.
+  if (containerInput.imageAttachments?.length && sessionId) {
+    log('Image attachments present — starting fresh session (multimodal + resume not supported)');
+    sessionId = undefined;
+  }
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous container runs

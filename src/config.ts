@@ -47,6 +47,12 @@ export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
 );
+// Hard wall-clock limit regardless of output activity (default 10 min).
+// Prevents containers from running indefinitely when the SDK retries rate limits.
+export const CONTAINER_MAX_LIFETIME = parseInt(
+  process.env.CONTAINER_MAX_LIFETIME || '600000',
+  10,
+);
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,

@@ -473,7 +473,11 @@ export async function runContainerAgent(
     const hardTimeout = setTimeout(() => {
       clearTimeout(timeout);
       logger.warn(
-        { group: group.name, containerName, maxLifetime: CONTAINER_MAX_LIFETIME },
+        {
+          group: group.name,
+          containerName,
+          maxLifetime: CONTAINER_MAX_LIFETIME,
+        },
         'Container exceeded max lifetime, force stopping',
       );
       killOnTimeout();

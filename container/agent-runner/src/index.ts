@@ -299,6 +299,9 @@ const IPC_MAX_FAILURES = 40; // skip after this many consecutive failures (~20s 
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
+const ipcFailedFiles = new Map<string, number>(); // filename -> fail count
+const IPC_MAX_FAILURES = 40; // skip after this many consecutive failures (~20s at 500ms poll)
+
 function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });

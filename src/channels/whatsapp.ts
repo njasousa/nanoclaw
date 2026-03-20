@@ -226,29 +226,60 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
-            // PDF attachment handling
-            if (normalized?.documentMessage?.mimetype === 'application/pdf') {
+            // Document attachment handling (PDF, Excel, Word, PowerPoint)
+            const docMime = normalized?.documentMessage?.mimetype || '';
+            const docName = normalized?.documentMessage?.fileName || '';
+            const docExt = path.extname(docName).toLowerCase();
+            const isPdf = docMime === 'application/pdf';
+            const isExcel =
+              docMime ===
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+              docMime === 'application/vnd.ms-excel' ||
+              docExt === '.xlsx' ||
+              docExt === '.xls';
+            const isWord =
+              docMime ===
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+              docMime === 'application/msword' ||
+              docExt === '.docx';
+            const isPowerPoint =
+              docMime ===
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+              docMime === 'application/vnd.ms-powerpoint' ||
+              docExt === '.pptx';
+            if (isPdf || isExcel || isWord || isPowerPoint) {
               try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {});
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
+                const defaultExt = isPdf
+                  ? '.pdf'
+                  : isExcel
+                    ? '.xlsx'
+                    : isPowerPoint
+                      ? '.pptx'
+                      : '.docx';
                 const filename = path.basename(
-                  normalized.documentMessage.fileName ||
-                    `doc-${Date.now()}.pdf`,
+                  docName || `doc-${Date.now()}${defaultExt}`,
                 );
                 const filePath = path.join(attachDir, filename);
                 fs.writeFileSync(filePath, buffer as Buffer);
                 const sizeKB = Math.round((buffer as Buffer).length / 1024);
-                const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
-                const caption = normalized.documentMessage.caption || '';
-                content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                const ref = isPdf
+                  ? `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`
+                  : `[Document: attachments/${filename} (${sizeKB}KB)]\nUse: doc-reader extract attachments/${filename}`;
+                const caption = normalized.documentMessage?.caption || '';
+                content = caption ? `${caption}\n\n${ref}` : ref;
                 logger.info(
                   { jid: chatJid, filename },
-                  'Downloaded PDF attachment',
+                  `Downloaded ${isPdf ? 'PDF' : isExcel ? 'Excel' : isPowerPoint ? 'PowerPoint' : 'Word'} attachment`,
                 );
               } catch (err) {
-                logger.warn({ err, jid: chatJid }, 'PDF - download failed');
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Document - download failed',
+                );
               }
             }
 

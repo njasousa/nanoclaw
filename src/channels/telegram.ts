@@ -295,9 +295,28 @@ export class TelegramChannel implements Channel {
       const doc = ctx.message.document;
       const name = doc?.file_name || 'file';
       const mime = doc?.mime_type || '';
+      const ext = path.extname(name).toLowerCase();
 
-      // PDF: download and save for pdf-reader tool
-      if (mime === 'application/pdf' && doc) {
+      const isPdf = mime === 'application/pdf';
+      const isExcel =
+        mime ===
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        mime === 'application/vnd.ms-excel' ||
+        ext === '.xlsx' ||
+        ext === '.xls';
+      const isWord =
+        mime ===
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        mime === 'application/msword' ||
+        ext === '.docx';
+      const isPowerPoint =
+        mime ===
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+        mime === 'application/vnd.ms-powerpoint' ||
+        ext === '.pptx';
+
+      // PDF, Excel, Word, or PowerPoint: download and save for reader tools
+      if ((isPdf || isExcel || isWord || isPowerPoint) && doc) {
         const chatJid = `tg:${ctx.chat.id}`;
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) return;
@@ -331,12 +350,17 @@ export class TelegramChannel implements Channel {
             const filePath = path.join(attachDir, filename);
             await downloadFile(downloadUrl, filePath);
             const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
-            const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
-            content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
-            logger.info({ chatJid, filename }, 'Telegram PDF downloaded');
+            const ref = isPdf
+              ? `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`
+              : `[Document: attachments/${filename} (${sizeKB}KB)]\nUse: doc-reader extract attachments/${filename}`;
+            content = caption ? `${caption}\n\n${ref}` : ref;
+            logger.info(
+              { chatJid, filename },
+              `Telegram ${isPdf ? 'PDF' : isExcel ? 'Excel' : isPowerPoint ? 'PowerPoint' : 'Word'} downloaded`,
+            );
           }
         } catch (err) {
-          logger.warn({ err, chatJid }, 'PDF - download failed');
+          logger.warn({ err, chatJid }, 'Document - download failed');
         }
 
         this.opts.onMessage(chatJid, {

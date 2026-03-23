@@ -25,7 +25,7 @@ function downloadFile(url: string, dest: string): Promise<void> {
         if (res.statusCode !== 200) {
           file.destroy();
           fs.unlink(dest, () => {});
-          reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
+          reject(new Error(`HTTP ${res.statusCode} downloading file`));
           return;
         }
         res.pipe(file);
@@ -43,6 +43,7 @@ export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  allowedUserIds?: Set<string>;
 }
 
 /**
@@ -178,6 +179,15 @@ export class TelegramChannel implements Channel {
         return;
       }
 
+      // Drop messages from unauthorized senders (if allowlist is configured)
+      if (this.opts.allowedUserIds && sender && !this.opts.allowedUserIds.has(sender)) {
+        logger.warn(
+          { chatJid, sender: senderName, userId: sender },
+          'Telegram message dropped: sender not in allowlist',
+        );
+        return;
+      }
+
       // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
         id: msgId,
@@ -202,12 +212,21 @@ export class TelegramChannel implements Channel {
       if (!group) return;
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderId = ctx.from?.id?.toString() || '';
       const senderName =
         ctx.from?.first_name ||
         ctx.from?.username ||
-        ctx.from?.id?.toString() ||
+        senderId ||
         'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+
+      if (this.opts.allowedUserIds && senderId && !this.opts.allowedUserIds.has(senderId)) {
+        logger.warn(
+          { chatJid, sender: senderName, userId: senderId },
+          'Telegram message dropped: sender not in allowlist',
+        );
+        return;
+      }
 
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
@@ -221,7 +240,7 @@ export class TelegramChannel implements Channel {
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
-        sender: ctx.from?.id?.toString() || '',
+        sender: senderId,
         sender_name: senderName,
         content: `${placeholder}${caption}`,
         timestamp,
@@ -249,6 +268,15 @@ export class TelegramChannel implements Channel {
         isGroup,
       );
       if (!group) return;
+
+      const photoSenderId = ctx.from?.id?.toString() || '';
+      if (this.opts.allowedUserIds && photoSenderId && !this.opts.allowedUserIds.has(photoSenderId)) {
+        logger.warn(
+          { chatJid, sender: senderName, userId: photoSenderId },
+          'Telegram photo dropped: sender not in allowlist',
+        );
+        return;
+      }
 
       // Pick the highest-resolution variant (last in the array)
       const photos = ctx.message.photo;
@@ -321,12 +349,22 @@ export class TelegramChannel implements Channel {
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) return;
 
+        const docSenderId = ctx.from?.id?.toString() || '';
         const timestamp = new Date(ctx.message.date * 1000).toISOString();
         const senderName =
           ctx.from?.first_name ||
           ctx.from?.username ||
-          ctx.from?.id?.toString() ||
+          docSenderId ||
           'Unknown';
+
+        if (this.opts.allowedUserIds && docSenderId && !this.opts.allowedUserIds.has(docSenderId)) {
+          logger.warn(
+            { chatJid, sender: senderName, userId: docSenderId },
+            'Telegram document dropped: sender not in allowlist',
+          );
+          return;
+        }
+
         const caption = ctx.message.caption || '';
         const isGroup =
           ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
@@ -346,7 +384,10 @@ export class TelegramChannel implements Channel {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const filename = path.basename(name);
+            const filename = path
+              .basename(name)
+              .replace(/[^a-zA-Z0-9._-]/g, '_')
+              .slice(0, 200);
             const filePath = path.join(attachDir, filename);
             await downloadFile(downloadUrl, filePath);
             const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
@@ -504,7 +545,8 @@ export async function sendPoolMessage(
     nextPoolIndex++;
     senderBotMap.set(key, idx);
     try {
-      await poolApis[idx].setMyName(sender);
+      const safeName = sender.replace(/[^\w\s\-().]/gu, '').slice(0, 64);
+      await poolApis[idx].setMyName(safeName);
       await new Promise((r) => setTimeout(r, 2000));
       logger.info(
         { sender, groupFolder, poolIndex: idx },
@@ -539,12 +581,26 @@ export async function sendPoolMessage(
 }
 
 registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
+  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USER_IDS']);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
     logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
-  return new TelegramChannel(token, opts);
+
+  const rawAllowed =
+    process.env.TELEGRAM_ALLOWED_USER_IDS || envVars.TELEGRAM_ALLOWED_USER_IDS || '';
+  const allowedUserIds = rawAllowed
+    ? new Set(rawAllowed.split(',').map((id) => id.trim()).filter(Boolean))
+    : undefined;
+
+  if (allowedUserIds) {
+    logger.info(
+      { count: allowedUserIds.size },
+      'Telegram: sender allowlist active',
+    );
+  }
+
+  return new TelegramChannel(token, { ...opts, allowedUserIds });
 });

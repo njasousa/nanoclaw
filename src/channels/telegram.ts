@@ -180,7 +180,11 @@ export class TelegramChannel implements Channel {
       }
 
       // Drop messages from unauthorized senders (if allowlist is configured)
-      if (this.opts.allowedUserIds && sender && !this.opts.allowedUserIds.has(sender)) {
+      if (
+        this.opts.allowedUserIds &&
+        sender &&
+        !this.opts.allowedUserIds.has(sender)
+      ) {
         logger.warn(
           { chatJid, sender: senderName, userId: sender },
           'Telegram message dropped: sender not in allowlist',
@@ -214,13 +218,14 @@ export class TelegramChannel implements Channel {
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderId = ctx.from?.id?.toString() || '';
       const senderName =
-        ctx.from?.first_name ||
-        ctx.from?.username ||
-        senderId ||
-        'Unknown';
+        ctx.from?.first_name || ctx.from?.username || senderId || 'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
-      if (this.opts.allowedUserIds && senderId && !this.opts.allowedUserIds.has(senderId)) {
+      if (
+        this.opts.allowedUserIds &&
+        senderId &&
+        !this.opts.allowedUserIds.has(senderId)
+      ) {
         logger.warn(
           { chatJid, sender: senderName, userId: senderId },
           'Telegram message dropped: sender not in allowlist',
@@ -270,7 +275,11 @@ export class TelegramChannel implements Channel {
       if (!group) return;
 
       const photoSenderId = ctx.from?.id?.toString() || '';
-      if (this.opts.allowedUserIds && photoSenderId && !this.opts.allowedUserIds.has(photoSenderId)) {
+      if (
+        this.opts.allowedUserIds &&
+        photoSenderId &&
+        !this.opts.allowedUserIds.has(photoSenderId)
+      ) {
         logger.warn(
           { chatJid, sender: senderName, userId: photoSenderId },
           'Telegram photo dropped: sender not in allowlist',
@@ -357,7 +366,11 @@ export class TelegramChannel implements Channel {
           docSenderId ||
           'Unknown';
 
-        if (this.opts.allowedUserIds && docSenderId && !this.opts.allowedUserIds.has(docSenderId)) {
+        if (
+          this.opts.allowedUserIds &&
+          docSenderId &&
+          !this.opts.allowedUserIds.has(docSenderId)
+        ) {
           logger.warn(
             { chatJid, sender: senderName, userId: docSenderId },
             'Telegram document dropped: sender not in allowlist',
@@ -581,7 +594,10 @@ export async function sendPoolMessage(
 }
 
 registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USER_IDS']);
+  const envVars = readEnvFile([
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_ALLOWED_USER_IDS',
+  ]);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
@@ -590,9 +606,16 @@ registerChannel('telegram', (opts: ChannelOpts) => {
   }
 
   const rawAllowed =
-    process.env.TELEGRAM_ALLOWED_USER_IDS || envVars.TELEGRAM_ALLOWED_USER_IDS || '';
+    process.env.TELEGRAM_ALLOWED_USER_IDS ||
+    envVars.TELEGRAM_ALLOWED_USER_IDS ||
+    '';
   const allowedUserIds = rawAllowed
-    ? new Set(rawAllowed.split(',').map((id) => id.trim()).filter(Boolean))
+    ? new Set(
+        rawAllowed
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean),
+      )
     : undefined;
 
   if (allowedUserIds) {

@@ -333,6 +333,7 @@ export class TelegramChannel implements Channel {
       const name = doc?.file_name || 'file';
       const mime = doc?.mime_type || '';
       const ext = path.extname(name).toLowerCase();
+      logger.info({ name, mime, ext, file_id: doc?.file_id }, 'Telegram document received');
 
       const isPdf = mime === 'application/pdf';
       const isExcel =
@@ -351,6 +352,88 @@ export class TelegramChannel implements Channel {
           'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
         mime === 'application/vnd.ms-powerpoint' ||
         ext === '.pptx';
+      const isImage =
+        mime.startsWith('image/') ||
+        ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext);
+      const isText =
+        mime.startsWith('text/') ||
+        mime === 'application/json' ||
+        mime === 'application/xml' ||
+        mime === 'application/x-gedcom' ||
+        ['.ged', '.txt', '.csv', '.json', '.xml', '.md', '.log'].includes(ext);
+
+      // Image sent as document (e.g. PNG, JPEG): download to media/ like photo messages
+      if (isImage && doc) {
+        const chatJid = `tg:${ctx.chat.id}`;
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) return;
+
+        const imgSenderId = ctx.from?.id?.toString() || '';
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          imgSenderId ||
+          'Unknown';
+
+        if (
+          this.opts.allowedUserIds &&
+          imgSenderId &&
+          !this.opts.allowedUserIds.has(imgSenderId)
+        ) {
+          logger.warn(
+            { chatJid, sender: senderName, userId: imgSenderId },
+            'Telegram image dropped: sender not in allowlist',
+          );
+          return;
+        }
+
+        const caption = ctx.message.caption ? `\n${ctx.message.caption}` : '';
+        const isGroup =
+          ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'telegram',
+          isGroup,
+        );
+
+        let content = `[Photo]${caption}`;
+        try {
+          const file = await ctx.api.getFile(doc.file_id);
+          if (file.file_path) {
+            const mediaDir = path.join(
+              resolveGroupFolderPath(group.folder),
+              'media',
+            );
+            fs.mkdirSync(mediaDir, { recursive: true });
+            const safeFilename = path
+              .basename(name)
+              .replace(/[^a-zA-Z0-9._-]/g, '_')
+              .slice(0, 200);
+            const localPath = path.join(mediaDir, safeFilename);
+            const containerPath = `/workspace/group/media/${safeFilename}`;
+            const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+            await downloadFile(fileUrl, localPath);
+            content = `[Photo: ${containerPath}]${caption}`;
+            logger.info({ chatJid, localPath }, 'Telegram image (document) downloaded');
+          }
+        } catch (err) {
+          logger.warn({ err }, 'Failed to download Telegram image document, using placeholder');
+        }
+
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+        return;
+      }
 
       // PDF, Excel, Word, or PowerPoint: download and save for reader tools
       if ((isPdf || isExcel || isWord || isPowerPoint) && doc) {
@@ -415,6 +498,153 @@ export class TelegramChannel implements Channel {
           }
         } catch (err) {
           logger.warn({ err, chatJid }, 'Document - download failed');
+        }
+
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+        return;
+      }
+
+      // Text-based files (GEDCOM, CSV, JSON, XML, etc.): download so the agent can read them
+      if (isText && doc) {
+        const chatJid = `tg:${ctx.chat.id}`;
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) return;
+
+        const txtSenderId = ctx.from?.id?.toString() || '';
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          txtSenderId ||
+          'Unknown';
+
+        if (
+          this.opts.allowedUserIds &&
+          txtSenderId &&
+          !this.opts.allowedUserIds.has(txtSenderId)
+        ) {
+          logger.warn(
+            { chatJid, sender: senderName, userId: txtSenderId },
+            'Telegram text document dropped: sender not in allowlist',
+          );
+          return;
+        }
+
+        const caption = ctx.message.caption ? `\n${ctx.message.caption}` : '';
+        const isGroup =
+          ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'telegram',
+          isGroup,
+        );
+
+        let content = `[Document: ${name}]${caption}`;
+        try {
+          const file = await ctx.api.getFile(doc.file_id);
+          if (file.file_path) {
+            const groupDir = resolveGroupFolderPath(group.folder);
+            const attachDir = path.join(groupDir, 'attachments');
+            fs.mkdirSync(attachDir, { recursive: true });
+            const safeFilename = path
+              .basename(name)
+              .replace(/[^a-zA-Z0-9._-]/g, '_')
+              .slice(0, 200);
+            const filePath = path.join(attachDir, safeFilename);
+            const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+            await downloadFile(fileUrl, filePath);
+            const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
+            const ref = `[File: attachments/${safeFilename} (${sizeKB}KB)]\nUse: cat attachments/${safeFilename}`;
+            content = caption ? `${caption}\n\n${ref}` : ref;
+            logger.info({ chatJid, filePath }, 'Telegram text document downloaded');
+          }
+        } catch (err) {
+          logger.warn({ err }, 'Failed to download Telegram text document, using placeholder');
+        }
+
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+        return;
+      }
+
+      // Unknown document type: still download so the agent can inspect it
+      if (doc) {
+        const chatJid = `tg:${ctx.chat.id}`;
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) {
+          storeNonText(ctx, `[Document: ${name}]`);
+          return;
+        }
+
+        const unknownSenderId = ctx.from?.id?.toString() || '';
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          unknownSenderId ||
+          'Unknown';
+
+        if (
+          this.opts.allowedUserIds &&
+          unknownSenderId &&
+          !this.opts.allowedUserIds.has(unknownSenderId)
+        ) {
+          logger.warn(
+            { chatJid, sender: senderName, userId: unknownSenderId },
+            'Telegram unknown document dropped: sender not in allowlist',
+          );
+          return;
+        }
+
+        const caption = ctx.message.caption ? `\n${ctx.message.caption}` : '';
+        const isGroup =
+          ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'telegram',
+          isGroup,
+        );
+
+        let content = `[Document: ${name}]${caption}`;
+        try {
+          const file = await ctx.api.getFile(doc.file_id);
+          if (file.file_path) {
+            const groupDir = resolveGroupFolderPath(group.folder);
+            const attachDir = path.join(groupDir, 'attachments');
+            fs.mkdirSync(attachDir, { recursive: true });
+            const safeFilename = path
+              .basename(name)
+              .replace(/[^a-zA-Z0-9._-]/g, '_')
+              .slice(0, 200);
+            const filePath = path.join(attachDir, safeFilename);
+            const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+            await downloadFile(fileUrl, filePath);
+            const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
+            const ref = `[File: attachments/${safeFilename} (${sizeKB}KB)]\nUse: cat attachments/${safeFilename}`;
+            content = caption ? `${caption}\n\n${ref}` : ref;
+            logger.info({ chatJid, filePath, mime, ext }, 'Telegram unknown document downloaded');
+          }
+        } catch (err) {
+          logger.warn({ err, name, mime }, 'Failed to download Telegram unknown document');
         }
 
         this.opts.onMessage(chatJid, {

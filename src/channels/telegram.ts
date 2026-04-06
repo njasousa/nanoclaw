@@ -106,8 +106,10 @@ export class TelegramChannel implements Channel {
       );
     });
 
-    // Command to check bot status
+    // Command to check bot status — registered chats only
     this.bot.command('ping', (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      if (!this.opts.registeredGroups()[chatJid]) return;
       ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
@@ -472,7 +474,11 @@ export class TelegramChannel implements Channel {
           isGroup,
         );
 
-        let content = `[Document: ${name}]`;
+        const safeDocFilename = path
+          .basename(name)
+          .replace(/[^a-zA-Z0-9._-]/g, '_')
+          .slice(0, 200);
+        let content = `[Document: ${safeDocFilename}]`;
         try {
           const file = await ctx.api.getFile(doc.file_id);
           if (file.file_path) {
@@ -480,10 +486,7 @@ export class TelegramChannel implements Channel {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const filename = path
-              .basename(name)
-              .replace(/[^a-zA-Z0-9._-]/g, '_')
-              .slice(0, 200);
+            const filename = safeDocFilename;
             const filePath = path.join(attachDir, filename);
             await downloadFile(downloadUrl, filePath);
             const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
@@ -549,17 +552,18 @@ export class TelegramChannel implements Channel {
           isGroup,
         );
 
-        let content = `[Document: ${name}]${caption}`;
+        const safeTxtFilename = path
+          .basename(name)
+          .replace(/[^a-zA-Z0-9._-]/g, '_')
+          .slice(0, 200);
+        let content = `[Document: ${safeTxtFilename}]${caption}`;
         try {
           const file = await ctx.api.getFile(doc.file_id);
           if (file.file_path) {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const safeFilename = path
-              .basename(name)
-              .replace(/[^a-zA-Z0-9._-]/g, '_')
-              .slice(0, 200);
+            const safeFilename = safeTxtFilename;
             const filePath = path.join(attachDir, safeFilename);
             const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
             await downloadFile(fileUrl, filePath);
@@ -624,17 +628,18 @@ export class TelegramChannel implements Channel {
           isGroup,
         );
 
-        let content = `[Document: ${name}]${caption}`;
+        const safeUnknownFilename = path
+          .basename(name)
+          .replace(/[^a-zA-Z0-9._-]/g, '_')
+          .slice(0, 200);
+        let content = `[Document: ${safeUnknownFilename}]${caption}`;
         try {
           const file = await ctx.api.getFile(doc.file_id);
           if (file.file_path) {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const safeFilename = path
-              .basename(name)
-              .replace(/[^a-zA-Z0-9._-]/g, '_')
-              .slice(0, 200);
+            const safeFilename = safeUnknownFilename;
             const filePath = path.join(attachDir, safeFilename);
             const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
             await downloadFile(fileUrl, filePath);
@@ -659,7 +664,8 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      storeNonText(ctx, `[Document: ${name}]`);
+      const safeDocName = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+      storeNonText(ctx, `[Document: ${safeDocName}]`);
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';

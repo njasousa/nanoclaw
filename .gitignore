@@ -24,6 +24,15 @@ groups/global/*
 # Temp files
 .tmp-*
 
+# Personal data — never push to the public repo
+*.xlsx
+~$*
+nanoclaw.db
+portugal-cultural-sites.md
+scripts/gerar-*
+scripts/adicionar-*
+scripts/remover-*
+
 # OS
 .DS_Store
 

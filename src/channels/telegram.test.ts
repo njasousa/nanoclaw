@@ -559,7 +559,9 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'test-photo-file-id' }] },
+      });
       await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -573,7 +575,10 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({ caption: 'Look at this' });
+      const ctx = createMediaCtx({
+        caption: 'Look at this',
+        extra: { photo: [{ file_id: 'test-photo-file-id' }] },
+      });
       await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -911,7 +916,7 @@ describe('TelegramChannel', () => {
 
       const handler = currentBot().commandHandlers.get('chatid')!;
       const ctx = {
-        chat: { id: 555, type: 'private' as const },
+        chat: { id: 100200300, type: 'private' as const },
         from: { first_name: 'Bob' },
         reply: vi.fn(),
       };
@@ -924,17 +929,74 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('/ping replies with bot status', async () => {
+    it('/ping replies with bot status in registered chats', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
       const handler = currentBot().commandHandlers.get('ping')!;
-      const ctx = { reply: vi.fn() };
+      const ctx = {
+        chat: { id: 100200300, type: 'group' as const },
+        reply: vi.fn(),
+      };
 
       await handler(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith('Andy is online.');
+    });
+
+    it('/ping ignores unregistered chats', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const handler = currentBot().commandHandlers.get('ping')!;
+      const ctx = {
+        chat: { id: 999999, type: 'group' as const },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(ctx.reply).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- Sender allowlist ---
+
+  describe('sender allowlist', () => {
+    it('drops messages from senders not in the allowlist', async () => {
+      const opts = createTestOpts({ allowedUserIds: new Set(['12345']) });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createTextCtx({ text: '@Andy hello', fromId: 99001 });
+      await triggerTextMessage(ctx);
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers messages from allowed senders', async () => {
+      const opts = createTestOpts({ allowedUserIds: new Set(['99001']) });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createTextCtx({ text: '@Andy hello', fromId: 99001 });
+      await triggerTextMessage(ctx);
+
+      expect(opts.onMessage).toHaveBeenCalled();
+    });
+
+    it('drops messages without a sender ID when allowlist is active (fail closed)', async () => {
+      const opts = createTestOpts({ allowedUserIds: new Set(['12345']) });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createTextCtx({ text: '@Andy hello' });
+      (ctx as { from?: unknown }).from = undefined;
+      await triggerTextMessage(ctx);
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
     });
   });
 

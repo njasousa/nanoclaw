@@ -136,7 +136,7 @@ export function startCredentialProxy(
           },
         );
 
-        upstream.setTimeout(30_000, () => {
+        upstream.setTimeout(120_000, () => {
           upstream.destroy(new Error('Upstream request timed out'));
         });
 

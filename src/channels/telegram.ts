@@ -16,27 +16,51 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
+// Telegram's Bot API caps downloads at 20MB; this guards against anything larger
+const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+
 /** Download a URL to a local file path using the native https module. */
 function downloadFile(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
+    const abort = (err: Error, res?: { destroy: () => void }) => {
+      res?.destroy();
+      file.destroy();
+      fs.unlink(dest, () => {});
+      reject(err);
+    };
     https
       .get(url, (res) => {
         if (res.statusCode !== 200) {
-          file.destroy();
-          fs.unlink(dest, () => {});
-          reject(new Error(`HTTP ${res.statusCode} downloading file`));
+          abort(new Error(`HTTP ${res.statusCode} downloading file`), res);
           return;
         }
+        const contentLength = Number(res.headers['content-length'] || 0);
+        if (contentLength > MAX_DOWNLOAD_BYTES) {
+          abort(new Error('Download exceeds size limit'), res);
+          return;
+        }
+        let bytes = 0;
+        res.on('data', (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes > MAX_DOWNLOAD_BYTES) {
+            abort(new Error('Download exceeds size limit'), res);
+          }
+        });
         res.pipe(file);
         file.on('finish', () => file.close(() => resolve()));
       })
-      .on('error', (err) => {
-        file.destroy();
-        fs.unlink(dest, () => {});
-        reject(err);
-      });
+      .on('error', (err) => abort(err));
   });
+}
+
+/** Strip path components and shell/markdown-significant characters from a
+ * sender-controlled filename before it reaches disk or the agent prompt. */
+function sanitizeFilename(name: string): string {
+  return path
+    .basename(name)
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 200);
 }
 
 export interface TelegramChannelOpts {
@@ -184,7 +208,6 @@ export class TelegramChannel implements Channel {
       // Drop messages from unauthorized senders (if allowlist is configured)
       if (
         this.opts.allowedUserIds &&
-        sender &&
         !this.opts.allowedUserIds.has(sender)
       ) {
         logger.warn(
@@ -225,7 +248,6 @@ export class TelegramChannel implements Channel {
 
       if (
         this.opts.allowedUserIds &&
-        senderId &&
         !this.opts.allowedUserIds.has(senderId)
       ) {
         logger.warn(
@@ -279,7 +301,6 @@ export class TelegramChannel implements Channel {
       const photoSenderId = ctx.from?.id?.toString() || '';
       if (
         this.opts.allowedUserIds &&
-        photoSenderId &&
         !this.opts.allowedUserIds.has(photoSenderId)
       ) {
         logger.warn(
@@ -333,9 +354,13 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:document', async (ctx) => {
       const doc = ctx.message.document;
       const name = doc?.file_name || 'file';
+      const safeName = sanitizeFilename(name);
       const mime = doc?.mime_type || '';
       const ext = path.extname(name).toLowerCase();
-      logger.info({ name, mime, ext, file_id: doc?.file_id }, 'Telegram document received');
+      logger.info(
+        { name, mime, ext, file_id: doc?.file_id },
+        'Telegram document received',
+      );
 
       const isPdf = mime === 'application/pdf';
       const isExcel =
@@ -380,7 +405,6 @@ export class TelegramChannel implements Channel {
 
         if (
           this.opts.allowedUserIds &&
-          imgSenderId &&
           !this.opts.allowedUserIds.has(imgSenderId)
         ) {
           logger.warn(
@@ -410,19 +434,22 @@ export class TelegramChannel implements Channel {
               'media',
             );
             fs.mkdirSync(mediaDir, { recursive: true });
-            const safeFilename = path
-              .basename(name)
-              .replace(/[^a-zA-Z0-9._-]/g, '_')
-              .slice(0, 200);
+            const safeFilename = safeName;
             const localPath = path.join(mediaDir, safeFilename);
             const containerPath = `/workspace/group/media/${safeFilename}`;
             const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
             await downloadFile(fileUrl, localPath);
             content = `[Photo: ${containerPath}]${caption}`;
-            logger.info({ chatJid, localPath }, 'Telegram image (document) downloaded');
+            logger.info(
+              { chatJid, localPath },
+              'Telegram image (document) downloaded',
+            );
           }
         } catch (err) {
-          logger.warn({ err }, 'Failed to download Telegram image document, using placeholder');
+          logger.warn(
+            { err },
+            'Failed to download Telegram image document, using placeholder',
+          );
         }
 
         this.opts.onMessage(chatJid, {
@@ -453,7 +480,6 @@ export class TelegramChannel implements Channel {
 
         if (
           this.opts.allowedUserIds &&
-          docSenderId &&
           !this.opts.allowedUserIds.has(docSenderId)
         ) {
           logger.warn(
@@ -474,11 +500,7 @@ export class TelegramChannel implements Channel {
           isGroup,
         );
 
-        const safeDocFilename = path
-          .basename(name)
-          .replace(/[^a-zA-Z0-9._-]/g, '_')
-          .slice(0, 200);
-        let content = `[Document: ${safeDocFilename}]`;
+        let content = `[Document: ${safeName}]`;
         try {
           const file = await ctx.api.getFile(doc.file_id);
           if (file.file_path) {
@@ -486,7 +508,7 @@ export class TelegramChannel implements Channel {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const filename = safeDocFilename;
+            const filename = safeName;
             const filePath = path.join(attachDir, filename);
             await downloadFile(downloadUrl, filePath);
             const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
@@ -531,7 +553,6 @@ export class TelegramChannel implements Channel {
 
         if (
           this.opts.allowedUserIds &&
-          txtSenderId &&
           !this.opts.allowedUserIds.has(txtSenderId)
         ) {
           logger.warn(
@@ -552,28 +573,30 @@ export class TelegramChannel implements Channel {
           isGroup,
         );
 
-        const safeTxtFilename = path
-          .basename(name)
-          .replace(/[^a-zA-Z0-9._-]/g, '_')
-          .slice(0, 200);
-        let content = `[Document: ${safeTxtFilename}]${caption}`;
+        let content = `[Document: ${safeName}]${caption}`;
         try {
           const file = await ctx.api.getFile(doc.file_id);
           if (file.file_path) {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const safeFilename = safeTxtFilename;
+            const safeFilename = safeName;
             const filePath = path.join(attachDir, safeFilename);
             const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
             await downloadFile(fileUrl, filePath);
             const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
             const ref = `[File: attachments/${safeFilename} (${sizeKB}KB)]\nUse: cat attachments/${safeFilename}`;
             content = caption ? `${caption}\n\n${ref}` : ref;
-            logger.info({ chatJid, filePath }, 'Telegram text document downloaded');
+            logger.info(
+              { chatJid, filePath },
+              'Telegram text document downloaded',
+            );
           }
         } catch (err) {
-          logger.warn({ err }, 'Failed to download Telegram text document, using placeholder');
+          logger.warn(
+            { err },
+            'Failed to download Telegram text document, using placeholder',
+          );
         }
 
         this.opts.onMessage(chatJid, {
@@ -593,7 +616,7 @@ export class TelegramChannel implements Channel {
         const chatJid = `tg:${ctx.chat.id}`;
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) {
-          storeNonText(ctx, `[Document: ${name}]`);
+          storeNonText(ctx, `[Document: ${safeName}]`);
           return;
         }
 
@@ -607,7 +630,6 @@ export class TelegramChannel implements Channel {
 
         if (
           this.opts.allowedUserIds &&
-          unknownSenderId &&
           !this.opts.allowedUserIds.has(unknownSenderId)
         ) {
           logger.warn(
@@ -628,28 +650,30 @@ export class TelegramChannel implements Channel {
           isGroup,
         );
 
-        const safeUnknownFilename = path
-          .basename(name)
-          .replace(/[^a-zA-Z0-9._-]/g, '_')
-          .slice(0, 200);
-        let content = `[Document: ${safeUnknownFilename}]${caption}`;
+        let content = `[Document: ${safeName}]${caption}`;
         try {
           const file = await ctx.api.getFile(doc.file_id);
           if (file.file_path) {
             const groupDir = resolveGroupFolderPath(group.folder);
             const attachDir = path.join(groupDir, 'attachments');
             fs.mkdirSync(attachDir, { recursive: true });
-            const safeFilename = safeUnknownFilename;
+            const safeFilename = safeName;
             const filePath = path.join(attachDir, safeFilename);
             const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
             await downloadFile(fileUrl, filePath);
             const sizeKB = Math.round(fs.statSync(filePath).size / 1024);
             const ref = `[File: attachments/${safeFilename} (${sizeKB}KB)]\nUse: cat attachments/${safeFilename}`;
             content = caption ? `${caption}\n\n${ref}` : ref;
-            logger.info({ chatJid, filePath, mime, ext }, 'Telegram unknown document downloaded');
+            logger.info(
+              { chatJid, filePath, mime, ext },
+              'Telegram unknown document downloaded',
+            );
           }
         } catch (err) {
-          logger.warn({ err, name, mime }, 'Failed to download Telegram unknown document');
+          logger.warn(
+            { err, name, mime },
+            'Failed to download Telegram unknown document',
+          );
         }
 
         this.opts.onMessage(chatJid, {
@@ -664,8 +688,7 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      const safeDocName = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-      storeNonText(ctx, `[Document: ${safeDocName}]`);
+      storeNonText(ctx, `[Document: ${safeName}]`);
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';

@@ -206,10 +206,7 @@ export class TelegramChannel implements Channel {
       }
 
       // Drop messages from unauthorized senders (if allowlist is configured)
-      if (
-        this.opts.allowedUserIds &&
-        !this.opts.allowedUserIds.has(sender)
-      ) {
+      if (this.opts.allowedUserIds && !this.opts.allowedUserIds.has(sender)) {
         logger.warn(
           { chatJid, sender: senderName, userId: sender },
           'Telegram message dropped: sender not in allowlist',
@@ -246,10 +243,7 @@ export class TelegramChannel implements Channel {
         ctx.from?.first_name || ctx.from?.username || senderId || 'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
-      if (
-        this.opts.allowedUserIds &&
-        !this.opts.allowedUserIds.has(senderId)
-      ) {
+      if (this.opts.allowedUserIds && !this.opts.allowedUserIds.has(senderId)) {
         logger.warn(
           { chatJid, sender: senderName, userId: senderId },
           'Telegram message dropped: sender not in allowlist',
